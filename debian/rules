@@ -1,4 +1,108 @@
 #!/usr/bin/make -f
 
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+DEB_CFLAGS          ?= $(shell dpkg-buildflags --get CFLAGS)
+DEB_CPPFLAGS        ?= $(shell dpkg-buildflags --get CPPFLAGS)
+DEB_CXXFLAGS        ?= $(shell dpkg-buildflags --get CXXFLAGS)
+
+DEB_HOST_ARCH_OS    ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
+DEB_HOST_ARCH       ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+
+COMMON_CONF_ARGS=-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                 -DCMAKE_INSTALL_PREFIX=/usr \
+                 -DRELEASE=True \
+                 -DBUILD_DOCS=ON \
+                 -DBUILD_EXTRAS=ON \
+                 -DCMAKE_C_FLAGS="$(DEB_CFLAGS) $(DEB_CPPFLAGS)" \
+                 -DCMAKE_CXX_FLAGS="$(DEB_CXXFLAGS) $(DEB_CPPFLAGS)"
+
+ifeq ($(DEB_HOST_ARCH_OS),linux)
+       LINUX_CONF_ARGS="-DBUILD_WLAN=ON -DBUILD_JOURNAL=ON"
+endif
+
+ifeq ($(DEB_HOST_ARCH),i386)
+ifeq ($(DEB_HOST_ARCH_OS),linux)
+       ENABLE_NVIDIA=-DBUILD_NVIDIA=ON
+endif
+endif
+
+ifeq ($(DEB_HOST_ARCH),amd64)
+ifeq ($(DEB_HOST_ARCH_OS),linux)
+       ENABLE_NVIDIA=-DBUILD_NVIDIA=ON
+endif
+endif
+
 %:
-	dh $@
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_clean:
+	rm -rf $(CURDIR)/README $(CURDIR)/doc/*.html $(CURDIR)/doc/*.1
+	dh_auto_clean --builddirectory build-std
+	dh_auto_clean --builddirectory build-cli
+	dh_auto_clean --builddirectory build-all
+
+override_dh_auto_configure:
+	dh_auto_configure --builddirectory build-std -- \
+	-DDOC_PATH=/usr/share/doc/conky-std \
+	$(COMMON_CONF_ARGS) $(LINUX_CONF_ARGS) \
+	-DBUILD_WAYLAND=ON \
+	-DBUILD_X11=ON \
+	-DBUILD_XDBE=ON
+	
+	dh_auto_configure --builddirectory build-cli -- \
+	-DDOC_PATH=/usr/share/doc/conky-cli \
+	$(COMMON_CONF_ARGS) \
+	-DBUILD_WAYLAND=OFF \
+	-DBUILD_X11=OFF
+	
+	dh_auto_configure --builddirectory build-all -- \
+	-DDOC_PATH=/usr/share/doc/conky-all \
+	$(COMMON_CONF_ARGS) $(LINUX_CONF_ARGS) $(ENABLE_NVIDIA) \
+	-DBUILD_AUDACIOUS=ON \
+	-DBUILD_CURL=ON \
+	-DBUILD_ICAL=ON \
+	-DBUILD_ICONV=ON \
+	-DBUILD_IMLIB2=ON \
+	-DBUILD_IRC=ON \
+	-DBUILD_LUA_CAIRO=ON \
+	-DBUILD_LUA_CAIRO_XLIB=ON \
+	-DBUILD_LUA_IMLIB2=ON \
+	-DBUILD_LUA_RSVG=ON \
+	-DBUILD_PULSEAUDIO=ON \
+	-DBUILD_RSS=ON \
+	-DBUILD_WAYLAND=ON \
+	-DBUILD_X11=ON \
+	-DBUILD_XDBE=ON
+
+override_dh_auto_build:
+	dh_auto_build --builddirectory build-std
+	dh_auto_build --builddirectory build-cli
+	dh_auto_build --builddirectory build-all
+
+override_dh_auto_test:
+	dh_auto_test --builddirectory build-std
+	dh_auto_test --builddirectory build-cli
+	dh_auto_test --builddirectory build-all
+
+override_dh_auto_install:
+	dh_auto_install --builddirectory build-std --destdir debian/conky-std
+	dh_auto_install --builddirectory build-cli --destdir debian/conky-cli
+	dh_auto_install --builddirectory build-all --destdir debian/conky-all
+
+override_dh_install:
+	dh_install -Xlibtcp-portmon.a -Xlibconky_core.a
+
+override_dh_installchangelogs:
+	dh_installchangelogs --no-trim
+
+override_dh_compress:
+	dh_compress -Xconvert.lua
+
+override_dh_strip:
+	dh_strip --dbgsym-migration='conky-std-dbg (<< 1.11.6-1~), conky-cli-dbg (<< 1.11.6-1~), conky-all-dbg (<< 1.11.6-1~)'
+
+override_dh_makeshlibs:
+	# Do not run ldconfig on private shared libraries in /usr/lib/conky
+	# This fixes lintian warning "postinst-has-useless-call-to-ldconfig"
+	dh_makeshlibs -X/usr/lib/conky
